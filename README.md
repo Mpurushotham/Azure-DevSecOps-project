@@ -1,3 +1,8 @@
+<img width="1200" height="800" alt="image" src="https://github.com/user-attachments/assets/4ee0f6c4-bc2f-4bbc-b9e9-66f2cf2ad5de" />
+
+
+
+
 # Azure DevSecOps — Complete Example (Options A, B, C)
 
 ## This archive contains three main deliverables:
