@@ -53,4 +53,7 @@ jobs:
           --registry-login-server $ACR_LOGIN \
           --registry-username $USERNAME \
           --registry-password $PASSWORD \
-          --dns-name-label myapp-${{ github.run_id }} --ports 80
+          --dns-name-label myapp-${{ github.run_id }} 
+          --os-type Linux \
+          --ports 80
+        
