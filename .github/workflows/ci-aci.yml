@@ -50,10 +50,9 @@ jobs:
         az container create -g $RG -n myapp-${{ github.run_id }} \
           --image $IMAGE \
           --cpu 1 --memory 1 \
+          --os-type Linux \
           --registry-login-server $ACR_LOGIN \
           --registry-username $USERNAME \
           --registry-password $PASSWORD \
-          --dns-name-label myapp-${{ github.run_id }} 
-          --os-type Linux \
-          --ports 80
+          --dns-name-label myapp-${{ github.run_id }} --ports 80
         
