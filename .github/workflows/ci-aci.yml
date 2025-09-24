@@ -1,0 +1,56 @@
+name: CI → Build → Scan → ACR → Deploy to ACI
+on:
+  push:
+    branches: [ main ]
+
+env:
+  IMAGE_NAME: myapp
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Azure login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Build Docker image
+      run: |
+        ACR=${{ secrets.ACR_LOGIN_SERVER }}
+        docker build -t $ACR/${{ env.IMAGE_NAME }}:${{ github.run_id }} ./app
+
+    - name: Login to ACR (for docker push)
+      run: |
+        az acr login --name ${{ secrets.ACR_NAME }}
+
+    - name: Push image to ACR
+      run: |
+        ACR=${{ secrets.ACR_LOGIN_SERVER }}
+        docker push $ACR/${{ env.IMAGE_NAME }}:${{ github.run_id }}
+
+    - name: Run Trivy image scan (report)
+      run: |
+        ACR=${{ secrets.ACR_LOGIN_SERVER }}
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity CRITICAL,HIGH $ACR/${{ env.IMAGE_NAME }}:${{ github.run_id }} || true
+
+    - name: Get ACR admin creds and Deploy to ACI (quick test)
+      run: |
+        # (we enabled ACR admin earlier for quick pull; otherwise use secured method)
+        ACR_NAME=${{ secrets.ACR_NAME }}
+        RG=${{ secrets.RESOURCE_GROUP }}
+        CREDS=$(az acr credential show -n $ACR_NAME -g $RG)
+        USERNAME=$(echo "$CREDS" | jq -r .username)
+        PASSWORD=$(echo "$CREDS" | jq -r .passwords[0].value)
+        ACR_LOGIN=${{ secrets.ACR_LOGIN_SERVER }}
+        IMAGE=$ACR_LOGIN/${{ env.IMAGE_NAME }}:${{ github.run_id }}
+
+        az container create -g $RG -n myapp-${{ github.run_id }} \
+          --image $IMAGE \
+          --cpu 1 --memory 1 \
+          --registry-login-server $ACR_LOGIN \
+          --registry-username $USERNAME \
+          --registry-password $PASSWORD \
+          --dns-name-label myapp-${{ github.run_id }} --ports 80
