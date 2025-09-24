@@ -1,0 +1,71 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  azureSubscription: '<AZURE_DEVOPS_SERVICE_CONN>'
+  infraModulePath: 'terraform/prod-module'
+  acrName: '<ACR_NAME>'
+  acrLoginServer: '<ACR_LOGIN_SERVER>'
+  imageName: 'myapp'
+  gitopsRepoUrl: '<GITOPS_REPO_URL>'  # repo where helm/myapp values are stored
+  gitopsBranch: 'main'
+
+stages:
+- stage: Infra
+  displayName: Provision Infrastructure
+  jobs:
+  - job: TerraformPlanApply
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - task: Bash@3
+      displayName: 'Terraform init & apply (prod-module)'
+      inputs:
+        targetType: 'inline'
+        script: |
+          cd $(System.DefaultWorkingDirectory)/terraform/prod-module
+          terraform init
+          terraform plan -out=tfplan -input=false
+          terraform apply -input=false -auto-approve tfplan
+
+- stage: BuildAndPush
+  dependsOn: Infra
+  jobs:
+  - job: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '18.x'
+    - script: |
+        cd app
+        npm ci
+        npm run test
+        cd ..
+      displayName: 'Install & Test'
+    - script: |
+        docker build -t $(acrLoginServer)/$(imageName):$(Build.BuildId) app
+      displayName: 'Docker Build'
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name $(acrName)
+          docker push $(acrLoginServer)/$(imageName):$(Build.BuildId)
+      displayName: 'Push to ACR'
+    - script: |
+        # update GitOps repo values and push
+        git clone $(gitopsRepoUrl) gitops-repo
+        cd gitops-repo
+        yq e '.image.repository = strenv(IMAGE_REPO) | .image.tag = strenv(TAG)' -i helm/myapp/values.yaml
+        git add helm/myapp/values.yaml
+        git commit -m "ci: promote image $(acrLoginServer)/$(imageName):$(Build.BuildId)"
+        git push origin $(gitopsBranch)
+      displayName: 'Update GitOps repo'

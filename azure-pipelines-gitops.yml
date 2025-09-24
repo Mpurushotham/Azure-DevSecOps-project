@@ -1,0 +1,76 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  azureSubscription: '<AZURE_DEVOPS_SERVICE_CONN>'
+  acrName: '<ACR_NAME>'
+  acrLoginServer: '<ACR_LOGIN_SERVER>'  # e.g. myacr.azurecr.io
+  imageName: 'myapp'
+  tag: '$(Build.BuildId)'
+  gitopsRepoUrl: '<GITOPS_REPO_URL>'   # repository where helm/myapp/values.yaml lives
+  gitopsRepoBranch: 'main'
+  gitopsRepoClonePath: 'gitops-repo'
+
+stages:
+- stage: Build
+  displayName: Build, Scan and Push
+  jobs:
+  - job: BuildAndPush
+    pool: vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '18.x'
+    - script: |
+        cd app
+        npm ci
+        npm run test
+      displayName: 'Install & Test'
+    - script: |
+        echo "## Build Docker image"
+        docker build -t $(acrLoginServer)/$(imageName):$(tag) app
+      displayName: 'Docker Build'
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name $(acrName)
+          docker push $(acrLoginServer)/$(imageName):$(tag)
+      displayName: 'Push image to ACR'
+    - script: |
+        docker run --rm aquasec/trivy:latest --exit-code 1 --severity CRITICAL,HIGH $(acrLoginServer)/$(imageName):$(tag) || true
+      displayName: 'Trivy scan (report)'
+    - task: SonarCloudPrepare@1
+      inputs:
+        SonarCloud: 'SonarCloud'
+        organization: 'your-org'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        cliProjectKey: 'devsecops-example'
+    - task: SonarCloudAnalyze@1
+    - task: SonarCloudPublish@1
+
+- stage: PromoteToGitOps
+  dependsOn: Build
+  jobs:
+  - job: UpdateGitOps
+    pool: vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: none
+    - script: |
+        git clone $(gitopsRepoUrl) $(gitopsRepoClonePath)
+        cd $(gitopsRepoClonePath)
+        git checkout $(gitopsRepoBranch)
+        # update values.yaml image repository and tag (yq required)
+        IMAGE_REPO=$(acrLoginServer)/$(imageName)
+        TAG=$(tag)
+        yq e '.image.repository = strenv(IMAGE_REPO) | .image.tag = strenv(TAG)' -i helm/myapp/values.yaml
+        git add helm/myapp/values.yaml
+        git commit -m "ci: update image to ${IMAGE_REPO}:${TAG}"
+        git push origin $(gitopsRepoBranch)
+      displayName: 'Update GitOps repo'

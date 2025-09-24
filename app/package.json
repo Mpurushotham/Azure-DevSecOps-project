@@ -1,0 +1,12 @@
+{
+  "name": "azure-devsecops-example",
+  "version": "1.0.0",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "test": "node -e \"console.log('no tests')\""
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
